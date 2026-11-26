@@ -129,6 +129,13 @@ async def main():
         await pg.evaluate("Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>0)))")
         f3=await pg.evaluate(FP)
         check("folder layout survives reload", f3==f2, [k for k in f2 if f3.get(k)!=f2[k]])
+        if await pg.is_visible("#folder-overlay"): await pg.click("#folder-close"); await asyncio.sleep(0.4)
+        # 1.14: a feed tile without site access yet says so (real Chrome permissions), and the clock switches on scroll
+        await pg.evaluate("(async()=>{tiles.push({id:'feedx',type:'feed',title:'Some News',url:'https://feeds.test.example/rss',site:'',color:'#b91d47',size:'wide'});commit();await refreshFeeds(true)})()")
+        await asyncio.sleep(1)
+        check("feed tile without access asks to allow", "Select to let Metro Start read" in await pg.inner_text("#grid [data-id=feedx]"))
+        await pg.hover("#clock-widget"); await pg.mouse.wheel(0,100); await asyncio.sleep(0.4)
+        check("clock switches on scroll", await pg.evaluate("clockWidget.classList.contains('remote')"))
         check("no page errors", not errs, errs)
         await ctx.close()
     print(f"{sum(res)}/{len(res)} passed")

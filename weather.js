@@ -84,6 +84,7 @@ const Weather = (() => {
       region: [x.admin1, x.country].filter(Boolean).join(', '),
       lat: x.latitude,
       lon: x.longitude,
+      tz: x.timezone || '',
     }));
   }
 
@@ -101,12 +102,15 @@ const Weather = (() => {
     }
   }
 
-  async function get(settings, { force = false } = {}) {
+  // `place` ({ name, lat, lon }) shows one of the extra weather places instead of your main location
+  async function get(settings, { force = false, place = null } = {}) {
     const cache = (await Store.get(CACHE_KEY, null)) || {};
-    const loc = await resolveLocation(settings.location, cache);
+    const loc = place ? { lat: place.lat, lon: place.lon, name: place.name } : await resolveLocation(settings.location, cache);
     const units = settings.units === 'c' ? 'celsius' : 'fahrenheit';
     const key = `${loc.lat.toFixed(2)},${loc.lon.toFixed(2)},${units}`;
-    if (!force && cache.key === key && Date.now() - cache.at < WEATHER_TTL) return { ...cache.data, place: loc.name };
+    const entries = cache.entries || {};
+    const hit = entries[key];
+    if (!force && hit && Date.now() - hit.at < WEATHER_TTL) return { ...hit.data, place: loc.name };
 
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
       `&current=temperature_2m,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min` +
@@ -126,8 +130,11 @@ const Weather = (() => {
       hi: Math.round(j.daily.temperature_2m_max[0]),
       lo: Math.round(j.daily.temperature_2m_min[0]),
     };
-    const next = { key, at: Date.now(), data };
-    if (!(settings.location && settings.location.mode === 'manual')) next.auto = { lat: loc.lat, lon: loc.lon, name: loc.name, at: loc.at || Date.now() };
+    entries[key] = { at: Date.now(), data };
+    // keep the newest dozen places
+    const kept = Object.fromEntries(Object.entries(entries).sort((a, b) => b[1].at - a[1].at).slice(0, 12));
+    const next = { entries: kept };
+    if (!place && !(settings.location && settings.location.mode === 'manual')) next.auto = { lat: loc.lat, lon: loc.lon, name: loc.name, at: loc.at || Date.now() };
     else if (cache.auto) next.auto = cache.auto;
     await Store.set(CACHE_KEY, next);
     return { ...data, place: loc.name };

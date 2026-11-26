@@ -8,6 +8,9 @@
 - search, backup round-trip, flip-on-open
 - the games (saved progress, Solitaire auto-finish, Minesweeper first click, Five Letters, Snake, Sudoku)
 - parallax and the wallpaper gallery
+- the right-click menu and its submenus
+- news feed tiles (RSS and Atom, finding a site's feed, pictures in each place feeds put them, all sizes, All headlines, site access)
+- more clocks and weather places (scrolling, arrow keys, trackpads, the Personalize lists)
 
 Every network request is answered with simulated data (weather, headlines, prices, Wikimedia, websites), and the Chrome extension APIs are stubbed, so the suite runs offline and gives the same results every time.
 
@@ -30,4 +33,4 @@ To use a particular browser binary, set `CHROME_PATH`:
 CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" python tests/regression.py
 ```
 
-`fixtures/` holds the stand-in images the simulated services return.
+`fixtures/` holds the stand-in images the simulated services return (the `story*.jpg` landscapes are drawn by a script, not real photos).

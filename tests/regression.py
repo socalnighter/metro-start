@@ -27,12 +27,41 @@ INIT="""window.__perm=[]; window.chrome={runtime:{id:'t',getURL:p=>'chrome-exten
  bookmarks:{getTree:async()=>["""+json.dumps(TREE)+"""]}};"""
 WX=json.dumps({"current":{"temperature_2m":66.2,"weather_code":1,"is_day":1},"daily":{"temperature_2m_max":[71],"temperature_2m_min":[56]}})
 RSS='<?xml version="1.0"?><rss><channel><item><title>Headline one - Source</title><link>https://n.example/1</link></item></channel></rss>'
+# news feed tiles: an RSS feed with media:thumbnail pictures, a site whose page points to an Atom feed
+# (pictures inside the story HTML), and a feed with no pictures at all
+FEED_RSS='''<?xml version="1.0"?><rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom"><channel>
+<title>Test News</title><atom:link href="https://feeds.test.example/rss" rel="self" type="application/rss+xml"/><link>https://news.test.example/</link>
+<item><title>Sunset crowds gather on the coast as the heat wave finally breaks</title><link>https://news.test.example/a1</link><pubDate>{d0}</pubDate>
+<media:thumbnail width="240" height="150" url="https://img.test.example/small1.jpg"/><media:thumbnail width="960" height="600" url="https://img.test.example/story1.jpg"/></item>
+<item><title>Night sky event draws stargazers to the desert</title><link>https://news.test.example/a2</link><pubDate>{d1}</pubDate>
+<media:content medium="image" url="https://img.test.example/story2.jpg" width="960"/></item>
+<item><title>Spring arrives early in the valley</title><link>https://news.test.example/a3</link><pubDate>{d2}</pubDate>
+<enclosure url="https://img.test.example/story3.jpg" type="image/jpeg" length="1"/></item>
+<item><title>A story with no picture</title><link>https://news.test.example/a4</link><pubDate>{d2}</pubDate></item>
+</channel></rss>'''
+SITE_HTML='<html><head><title>Atom Site</title><link rel="alternate" type="application/atom+xml" href="/atom.xml"></head><body>hi</body></html>'
+FEED_ATOM='''<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Atom Site Blog</title><link rel="alternate" href="https://site.test.example/"/>
+<entry><title>Atom story with an inline picture</title><link rel="alternate" href="https://site.test.example/p1"/><updated>{d0}</updated>
+<content type="html">&lt;p&gt;&lt;img src="https://img.test.example/pixel.gif" width="1" height="1"&gt;&lt;img src="/images/story3.jpg"&gt;Text&lt;/p&gt;</content></entry></feed>'''
+FEED_NOPIC='<?xml version="1.0"?><rss><channel><title>Plain</title><link>https://plain.test.example/</link><item><title>Plain headline without a photo for this tile</title><link>https://plain.test.example/1</link></item></channel></rss>'
+def feed_dates():
+    import email.utils, time
+    now=time.time()
+    return dict(d0=email.utils.formatdate(now-600), d1=email.utils.formatdate(now-7200), d2=email.utils.formatdate(now-90000))
 CHART=json.dumps({"chart":{"result":[{"meta":{"regularMarketPrice":100,"chartPreviousClose":99,"currency":"USD"}}]}})
 async def route(r):
     u=r.request.url
     if 'bigdatacloud' in u: return await r.fulfill(body=json.dumps({"latitude":33.1,"longitude":-117.3,"city":"Carlsbad"}),content_type='application/json',headers=CORS)
     if 'open-meteo' in u: return await r.fulfill(body=WX,content_type='application/json',headers=CORS)
     if 'news.google.com' in u: return await r.fulfill(body=RSS,content_type='application/rss+xml',headers=CORS)
+    if u.startswith('https://feeds.test.example/rss') or u.startswith('https://feeds.bbci.co.uk/'): return await r.fulfill(body=FEED_RSS.format(**feed_dates()),content_type='application/rss+xml',headers=CORS)
+    if u.startswith('https://site.test.example/atom.xml'): return await r.fulfill(body=FEED_ATOM.replace('{d0}','2026-11-24T10:00:00Z'),content_type='application/atom+xml',headers=CORS)
+    if u.startswith('https://site.test.example/images/'): return await r.fulfill(path=str(FIX / 'story3.jpg'))
+    if u.startswith('https://site.test.example/'): return await r.fulfill(body=SITE_HTML,content_type='text/html',headers=CORS)
+    if u.startswith('https://plain.test.example/feed'): return await r.fulfill(body=FEED_NOPIC,content_type='application/rss+xml',headers=CORS)
+    if u.startswith('https://img.test.example/'):
+        name=u.rsplit('/',1)[-1]
+        return await r.fulfill(path=str(FIX / (name if (FIX / name).exists() else 'story1.jpg')))
     if 'finance.yahoo.com/v8' in u: return await r.fulfill(body=CHART,content_type='application/json',headers=CORS)
     if u.startswith('https://github.com/apple'): return await r.fulfill(path=str(FIX / 'icon.png'))
     if u.startswith('https://github.com/'): return await r.fulfill(body='<html><head><link rel="apple-touch-icon" href="/apple.png"></head></html>',content_type='text/html',headers=CORS)
@@ -303,6 +332,174 @@ async def main():
         check("menu: a folder isn't offered as its own target", not any(x.startswith("Many") for x in l1), l1)
         await pg.keyboard.press("Escape")
         check("no page errors (1.13 menu)", not errs, str(errs))
+
+        # ---- 1.14: news feed tiles
+        pg,errs=await fresh(b)
+        parsed=await pg.evaluate("""(async()=>{const r=await fetch('https://feeds.test.example/rss');const f=Feeds.parse(await r.text(),'https://feeds.test.example/rss');
+          return {title:f.title, site:f.site, n:f.items.length, imgs:f.items.map(i=>i.image), links:f.items.map(i=>i.link)}})()""")
+        check("feed: RSS parsed (title, site link, 4 stories)", parsed['title']=="Test News" and parsed['site']=="https://news.test.example/" and parsed['n']==4, parsed)
+        check("feed: pictures from media:thumbnail (largest), media:content, enclosure; none when missing",
+              parsed['imgs']==["https://img.test.example/story1.jpg","https://img.test.example/story2.jpg","https://img.test.example/story3.jpg",""], parsed['imgs'])
+        check("feed: story links (not the feed's own atom:link)", parsed['links'][0]=="https://news.test.example/a1", parsed['links'])
+        found=await pg.evaluate("Feeds.discover('https://site.test.example/').then(f=>({feed:f.feed,title:f.title,img:f.items[0].image,link:f.items[0].link}))")
+        check("feed: found from a site's page (Atom, inline picture, tracking pixel skipped)",
+              found=={"feed":"https://site.test.example/atom.xml","title":"Atom Site Blog","img":"https://site.test.example/images/story3.jpg","link":"https://site.test.example/p1"}, found)
+        # add with the editor: News feed type, a site address
+        await pg.click("#btn-add"); await pg.click("#ctx .ctx-item >> text=Add a tile")
+        await pg.click("#ed-type button[data-value=feed]")
+        check("editor: feed presets shown", await pg.is_visible("#ed-feed-presets .chip >> text=BBC News"))
+        await pg.fill("#ed-url","site.test.example"); await pg.click("#ed-save"); await pg.wait_for_timeout(800)
+        t=await pg.evaluate("tiles.find(t=>t.type==='feed')")
+        check("editor: feed tile saved with the discovered feed", bool(t) and t['url']=="https://site.test.example/atom.xml" and t['title']=="Atom Site Blog" and t['size']=="wide", t)
+        check("feed tile shows photo + headline", await pg.evaluate("(()=>{const e=document.querySelector('#grid .tile.feed');return !!e && e.classList.contains('has-photo') && e.querySelector('.feed-headline').textContent==='Atom story with an inline picture' && e.getAttribute('href')==='https://site.test.example/p1'})()"))
+        # add a ready-made feed from the + menu (permission asked for its site)
+        await pg.evaluate("__perm.length=0")
+        await pg.click("#btn-add"); await pg.hover("#ctx .ctx-item >> text=Add a news feed"); await pg.wait_for_timeout(350)
+        await pg.click("#ctx .ctx-panel[data-level='1'] .ctx-item >> text=BBC News"); await pg.wait_for_timeout(800)
+        perm=await pg.evaluate("__perm")
+        check("preset: asks Chrome for the feed's site only", perm==[{"origins":["https://feeds.bbci.co.uk/*","http://feeds.bbci.co.uk/*"]}], perm)
+        bbc=await pg.evaluate("(()=>{const t=tiles.find(t=>t.title==='BBC News');const e=t&&document.querySelector(`#grid [data-id='${t.id}']`);return e?[t.size,e.classList.contains('has-photo'),e.querySelector('.feed-headline').textContent]:null})()")
+        check("preset: BBC tile added and filled", bbc==["wide",True,"Sunset crowds gather on the coast as the heat wave finally breaks"], bbc)
+        # sizes: large (photo + headline overlay), medium, small (icon, no headline)
+        for size in ["large","medium","small"]:
+            await pg.evaluate(f"(()=>{{const t=tiles.find(t=>t.title==='BBC News');t.size='{size}';commit()}})()"); await pg.wait_for_timeout(150)
+            info=await pg.evaluate("(()=>{const t=tiles.find(t=>t.title==='BBC News');const e=document.querySelector(`#grid [data-id='${t.id}']`);const r=e.getBoundingClientRect();return {w:Math.round(r.width),h:Math.round(r.height),photo:!!e.querySelector('.feed-photo img'),head:!!e.querySelector('.feed-headline')}})()")
+            exp={"large":(True,True),"medium":(True,True),"small":(False,False)}[size]
+            check(f"feed tile {size}", (info['photo'],info['head'])==exp, info)
+        # all headlines
+        await pg.evaluate("(()=>{const t=tiles.find(t=>t.title==='BBC News');t.size='wide';commit()})()"); await pg.wait_for_timeout(100)
+        await pg.click("#grid .tile.feed >> nth=1", button="right"); await pg.click("#ctx .ctx-item >> text=All headlines"); await pg.wait_for_timeout(400)
+        check("all headlines: list with thumbnails", await pg.evaluate("[document.querySelectorAll('#feed-list .feed-item').length, document.querySelectorAll('#feed-list .feed-thumb').length]")==[4,3])
+        await pg.keyboard.press("Escape"); await pg.wait_for_timeout(150)
+        check("all headlines: Esc closes", await pg.evaluate("document.querySelector('#feed-overlay').hidden"))
+        # a feed with no pictures still makes a readable tile
+        await pg.evaluate("(async()=>{tiles.push({id:'plain',type:'feed',title:'Plain',url:'https://plain.test.example/feed',site:'',color:'#da532c',size:'wide'});commit();await refreshFeeds(true)})()"); await pg.wait_for_timeout(400)
+        check("feed without pictures: headline on the tile color", await pg.evaluate("(()=>{const e=document.querySelector('#grid [data-id=plain]');return !e.classList.contains('has-photo') && e.querySelector('.feed-headline').textContent.startsWith('Plain headline')})()"))
+        # feed with no site access yet: asks on click
+        await pg.evaluate("chrome.permissions.contains=async()=>false; (async()=>{tiles.push({id:'locked',type:'feed',title:'Locked',url:'https://locked.test.example/feed',site:'',color:'#2b5797',size:'medium'});commit();await refreshFeeds(true)})()"); await pg.wait_for_timeout(400)
+        check("feed without access: tile asks to allow", "Select to let Metro Start read" in await pg.inner_text("#grid [data-id=locked]"))
+        await pg.evaluate("chrome.permissions.contains=async()=>true")
+        check("feed tiles survive a backup round-trip", await pg.evaluate("sanitizeTiles(JSON.parse(JSON.stringify(tiles))).filter(t=>t.type==='feed').length")==4)
+        typed=await pg.evaluate("(()=>{searchInput.value='bbc';searchInput.dispatchEvent(new Event('input'));return [...document.querySelectorAll('#grid .tile')].map(e=>e.classList.contains('feed'))})()")
+        check("search finds feed tiles", typed==[True], typed)
+        await pg.evaluate("clearSearch()")
+        # 1.14.1: Start fills the screen's height, so a large tile fits under another large tile
+        await pg.set_viewport_size({"width":1440,"height":1100}); await pg.wait_for_timeout(300)
+        rows=await pg.evaluate("startRows")
+        check("Start uses the screen's height (more than 6 rows)", rows>6, rows)
+        await pg.evaluate("""(()=>{tiles.length=0;tiles.push(
+          {id:'npr',type:'feed',title:'NPR',url:'https://feeds.test.example/rss?npr',site:'',color:'#2b5797',size:'large',pos:{g:0,c:0,r:0}},
+          {id:'bbc',type:'feed',title:'BBC',url:'https://feeds.test.example/rss?bbc',site:'',color:'#b91d47',size:'large',pos:{g:1,c:0,r:0}});commit()})()""")
+        await pg.wait_for_timeout(300)
+        box=await pg.evaluate("(()=>{const r=document.querySelector('#grid [data-id=npr]').getBoundingClientRect();const u=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--unit'));const g=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gap'));return {x:r.left+r.width/2,y:r.top+r.height/2+4*(u+g)}})()")
+        await pg.drag_and_drop("#grid [data-id=bbc]","#grid-scroller",target_position=await pg.evaluate(f"(()=>{{const s=document.querySelector('#grid-scroller').getBoundingClientRect();return {{x:{box['x']}-s.left,y:{box['y']}-s.top}}}})()"))
+        await pg.wait_for_timeout(400)
+        pos=await pg.evaluate("tiles.find(t=>t.id==='bbc').pos")
+        check("large tile drops under another large tile", pos=={"g":0,"c":0,"r":4}, pos)
+        check("no page errors (feed tiles)", not errs, str(errs))
+
+        # ---- 1.15: hold a tile over another to make a folder of the two
+        pg,errs=await fresh(b)
+        await pg.evaluate("""(()=>{tiles.length=0;tiles.push(
+          {id:'ta',type:'link',title:'Alpha',url:'https://alpha.example/',color:'#2b5797',size:'medium',icon:{mode:'favicon'},pos:{g:0,c:0,r:0}},
+          {id:'tb',type:'link',title:'Beta',url:'https://beta.example/',color:'#00a300',size:'medium',icon:{mode:'favicon'},pos:{g:0,c:2,r:0}},
+          {id:'tc',type:'link',title:'Gamma',url:'https://gamma.example/',color:'#da532c',size:'wide',icon:{mode:'favicon'},pos:{g:0,c:0,r:2}},
+          {id:'fz',type:'folder',title:'Zed',color:'#603cba',size:'medium',children:[{id:'in1',type:'link',title:'Inner One',url:'https://one.example/',color:'#2b5797',size:'medium',icon:{mode:'favicon'}},{id:'in2',type:'link',title:'Inner Two',url:'https://two.example/',color:'#00a300',size:'medium',icon:{mode:'favicon'}}],pos:{g:0,c:0,r:4}});commit()})()""")
+        await pg.wait_for_timeout(600)
+        center=lambda sel: pg.evaluate(f"(()=>{{const r=document.querySelector(\"{sel}\").getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2,r.width,r.height]}})()")
+        async def drag_hold(src, dst, hold_ms, dx=0, dy=0, peek=False):
+            sx,sy,_,_=await center(src); tx,ty,_,_=await center(dst)
+            await pg.mouse.move(sx,sy); await pg.mouse.down()
+            await pg.mouse.move(sx+12,sy+12,steps=3)
+            await pg.mouse.move(tx+dx,ty+dy,steps=8)
+            seen=False; waited=0
+            while waited<hold_ms:
+                await pg.wait_for_timeout(120); waited+=120
+                await pg.mouse.move(tx+dx+(waited//120)%2,ty+dy)
+                seen=seen or await pg.evaluate(f"!!document.querySelector(\"{dst}.drop-combine\")")
+            await pg.mouse.up(); await pg.wait_for_timeout(400)
+            return seen
+        # a quick drop on the middle just moves (no folder)
+        seen=await drag_hold("#grid [data-id=tb]","#grid [data-id=ta]",0)
+        check("combine: a quick drop doesn't make a folder", not seen and await pg.evaluate("tiles.every(t=>t.id!=='ta'||t.type==='link') && tiles.length===4"), await pg.evaluate("tiles.map(t=>t.id)"))
+        await pg.evaluate("""(()=>{const p={ta:{g:0,c:0,r:0},tb:{g:0,c:2,r:0},tc:{g:0,c:0,r:2},fz:{g:0,c:0,r:4}};tiles.forEach(t=>t.pos=p[t.id]);commit()})()"""); await pg.wait_for_timeout(300)
+        # holding near the edge doesn't either
+        _,_,w,hgt=await center("#grid [data-id=ta]")
+        seen=await drag_hold("#grid [data-id=tb]","#grid [data-id=ta]",900,dx=-w*0.42)
+        check("combine: holding near the edge just moves", not seen and await pg.evaluate("!tiles.some(t=>t.type==='folder'&&t.id!=='fz')"))
+        await pg.evaluate("""(()=>{const p={ta:{g:0,c:0,r:0},tb:{g:0,c:2,r:0},tc:{g:0,c:0,r:2},fz:{g:0,c:0,r:4}};tiles.forEach(t=>t.pos=p[t.id]);commit()})()"""); await pg.wait_for_timeout(300)
+        before=await pg.evaluate("Object.fromEntries([...lastSpots].map(([k,v])=>[k,[v.group,v.col,v.row]]))")
+        # hold over the middle: outline shows, then a folder "Alpha + Beta" replaces Alpha
+        seen=await drag_hold("#grid [data-id=tb]","#grid [data-id=ta]",900)
+        check("combine: holding shows the Make a folder outline", seen)
+        f=await pg.evaluate("(()=>{const f=tiles.find(t=>t.type==='folder'&&t.id!=='fz');return f&&{title:f.title,kids:f.children.map(c=>c.id),size:f.size,color:f.color,pos:f.pos}})()")
+        check("combine: folder named Alpha + Beta with both inside", bool(f) and f['title']=="Alpha + Beta" and f['kids']==["ta","tb"], f)
+        check("combine: folder takes the target's spot, size and color", bool(f) and f['size']=="medium" and f['color']=="#2b5797" and f['pos']=={"g":0,"c":0,"r":0}, f)
+        after=await pg.evaluate("Object.fromEntries([...lastSpots].map(([k,v])=>[k,[v.group,v.col,v.row]]))")
+        check("combine: other tiles don't move", after.get('tc')==before['tc'] and after.get('fz')==before['fz'], (before,after))
+        check("combine: toast offers Undo", await pg.is_visible("#toast button >> text=Undo"))
+        await pg.click("#toast button >> text=Undo"); await pg.wait_for_timeout(300)
+        check("combine: Undo splits them again", await pg.evaluate("tiles.map(t=>t.id).sort().join()")=="fz,ta,tb,tc")
+        # a folder dragged onto a tile never combines
+        seen=await drag_hold("#grid [data-id=fz]","#grid [data-id=tc]",900)
+        check("combine: folders don't combine", not seen and await pg.evaluate("tiles.filter(t=>t.type==='folder').length")==1)
+        # inside a folder: makes a subfolder
+        await pg.evaluate("openFolder('fz')"); await pg.wait_for_timeout(900)
+        await pg.evaluate("Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>0)))")
+        seen=await drag_hold("#folder-grid [data-id=in2]","#folder-grid [data-id=in1]",900)
+        sub=await pg.evaluate("(()=>{const z=tiles.find(t=>t.id==='fz');return z.children.map(c=>c.type==='folder'?c.title+':'+c.children.map(k=>k.id).join('/'):c.id)})()")
+        check("combine: inside a folder makes a subfolder", seen and sub==["Inner One + Inner Two:in1/in2"], sub)
+        check("no page errors (combine)", not errs, str(errs))
+
+        # ---- 1.14: more clocks and weather places, scroll to switch
+        pg2=await b.new_page(viewport={"width":1440,"height":860}, timezone_id="America/Los_Angeles"); errs2=[]
+        pg2.on("pageerror", lambda e: errs2.append(str(e)))
+        await pg2.add_init_script(INIT); await pg2.route("**/*", route)
+        await pg2.goto(URL); await pg2.wait_for_timeout(1200)
+        check("clocks: default extra clocks", await pg2.evaluate("settings.clocks.map(c=>c.name)")==["Los Angeles","New York","UTC","New Delhi"])
+        check("clocks: your own time zone isn't repeated", await pg2.evaluate("clockList().map(c=>c.name||'local')")==["local","New York","UTC","New Delhi"])
+        check("clocks: dots show 4", await pg2.evaluate("document.querySelectorAll('#clock-dots .cycle-dot').length")==4)
+        await pg2.hover("#clock-widget"); await pg2.mouse.wheel(0,100); await pg2.wait_for_timeout(300)
+        d1=await pg2.inner_text("#date")
+        check("clocks: scroll down shows New York", d1.startswith("New York (E"), d1)
+        for _ in range(2): await pg2.mouse.wheel(0,100); await pg2.wait_for_timeout(300)
+        d3=await pg2.inner_text("#date"); t3=await pg2.inner_text("#time")
+        ist=await pg2.evaluate("new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit',hourCycle:'h12',timeZone:'Asia/Kolkata'}).formatToParts(new Date()).filter(p=>p.type!=='dayPeriod').map(p=>p.value).join('').trim()")
+        check("clocks: India shows IST and its own time", d3.startswith("New Delhi (IST)") and t3.replace("\n","").startswith(ist), (d3,t3,ist))
+        await pg2.mouse.wheel(0,100); await pg2.wait_for_timeout(300)
+        check("clocks: wraps back to your time", not await pg2.evaluate("clockWidget.classList.contains('remote')"))
+        await pg2.mouse.wheel(0,-100); await pg2.wait_for_timeout(300)
+        check("clocks: scroll up goes back", (await pg2.inner_text("#date")).startswith("New Delhi"))
+        # trackpad: tiny deltas add up, and one gesture doesn't skip several clocks
+        await pg2.evaluate("clockIndex=0;tickClock(true)")
+        for _ in range(12): await pg2.mouse.wheel(0,8)
+        await pg2.wait_for_timeout(100)
+        check("clocks: a trackpad flick moves one step", await pg2.evaluate("clockIndex")==1, await pg2.evaluate("clockIndex"))
+        await pg2.focus("#clock-widget"); await pg2.keyboard.press("ArrowRight"); await pg2.wait_for_timeout(100)
+        check("clocks: arrow keys switch too", await pg2.evaluate("clockIndex")==2)
+        check("clocks: page didn't scroll sideways", await pg2.evaluate("document.querySelector('#grid-scroller').scrollLeft")==0)
+        # settings: remove a clock, add it back from the quick-add buttons
+        await pg2.evaluate("openSettings()"); await pg2.wait_for_timeout(300)
+        await pg2.click("#set-clock-list li >> nth=2 >> button[title=Remove]"); await pg2.wait_for_timeout(100)
+        check("settings: clock removed", await pg2.evaluate("settings.clocks.map(c=>c.name)")==["Los Angeles","New York","New Delhi"])
+        await pg2.click("#set-clock-presets .chip >> text=+ UTC"); await pg2.wait_for_timeout(100)
+        check("settings: quick-add puts it back", await pg2.evaluate("settings.clocks.map(c=>c.name)")==["Los Angeles","New York","New Delhi","UTC"])
+        await pg2.click("#set-clock-list li >> nth=3 >> button[title='Move up']"); await pg2.wait_for_timeout(100)
+        check("settings: move up", await pg2.evaluate("settings.clocks.map(c=>c.name)")==["Los Angeles","New York","UTC","New Delhi"])
+        await pg2.evaluate("closeSettings()")
+        # weather places
+        await pg2.evaluate("updateSetting(s=>{s.places=[{name:'Tehran',lat:35.7,lon:51.4},{name:'London',lat:51.5,lon:-0.12}]},{weather:true})"); await pg2.wait_for_timeout(400)
+        check("weather: dots show 3", await pg2.evaluate("document.querySelectorAll('#weather-dots .cycle-dot').length")==3)
+        await pg2.hover("#weather-widget"); await pg2.mouse.wheel(0,100); await pg2.wait_for_timeout(400)
+        check("weather: scroll shows the next place", await pg2.inner_text("#w-place")=="Tehran")
+        await pg2.mouse.wheel(0,100); await pg2.wait_for_timeout(400)
+        check("weather: and the next", await pg2.inner_text("#w-place")=="London")
+        await pg2.mouse.wheel(0,100); await pg2.wait_for_timeout(400)
+        check("weather: back to your location", await pg2.inner_text("#w-place")=="Carlsbad")
+        cache=await pg2.evaluate("Store.get('weatherCache',null).then(c=>Object.keys(c.entries||{}).length)")
+        check("weather: each place cached separately", cache==3, cache)
+        check("settings: bad clocks from a backup are dropped", await pg2.evaluate("mergeSettings({clocks:[{tz:'Not/AZone',name:'x'},{tz:'Europe/Paris',name:'Paris'}]}).clocks.map(c=>c.name)")==["Paris"])
+        check("no page errors (clocks and weather)", not errs2, str(errs2))
 
         await b.close()
     print(f"\n{sum(ok for _,ok in results)}/{len(results)} passed")

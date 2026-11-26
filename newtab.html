@@ -36,9 +36,10 @@
 
     <a id="bg-credit" class="bg-credit" target="_blank" rel="noopener" hidden></a>
     <footer id="info-bar" data-pos="left">
-      <div id="clock-widget">
+      <div id="clock-widget" tabindex="0" aria-label="Clock">
         <div id="time"></div>
         <div id="date"></div>
+        <div class="cycle-dots" id="clock-dots" aria-hidden="true" hidden></div>
       </div>
       <button id="weather-widget" type="button" title="Weather">
         <span class="w-icon" id="w-icon"></span>
@@ -48,6 +49,7 @@
           <span class="w-range" id="w-range"></span>
           <span class="w-place" id="w-place"></span>
         </span>
+        <span class="cycle-dots" id="weather-dots" aria-hidden="true" hidden></span>
       </button>
       <section class="widget" id="news-widget" aria-label="News" hidden>
         <div class="widget-head"><span>News</span><span class="widget-sub" id="news-sub"></span></div>
@@ -77,6 +79,23 @@
     </div>
   </div>
 
+  <!-- All headlines of a news feed tile -->
+  <div id="feed-overlay" class="overlay" hidden>
+    <div class="band">
+      <div class="band-inner feed-band">
+        <div class="band-head">
+          <h2 id="feed-title" class="feed-title"></h2>
+          <span class="muted" id="feed-sub"></span>
+          <span class="band-spacer"></span>
+          <button type="button" class="btn" id="feed-refresh">Refresh</button>
+          <button type="button" class="btn" id="feed-site">Open site</button>
+          <button type="button" class="btn primary" id="feed-close">Done</button>
+        </div>
+        <ul id="feed-list" class="feed-list"></ul>
+      </div>
+    </div>
+  </div>
+
   <!-- Tile editor -->
   <div id="editor-overlay" class="overlay" hidden>
     <div class="band">
@@ -85,12 +104,14 @@
           <h2 id="ed-heading">Add a tile</h2>
           <div class="field" id="ed-type-field">
             <div class="seg" id="ed-type" role="group" aria-label="Tile type">
-              <button type="button" data-value="link">Link</button><button type="button" data-value="folder">Folder</button>
+              <button type="button" data-value="link">Link</button><button type="button" data-value="feed">News feed</button><button type="button" data-value="folder">Folder</button>
             </div>
           </div>
           <div class="field" id="ed-url-field">
-            <label class="field-label" for="ed-url">Web address</label>
+            <label class="field-label" for="ed-url" id="ed-url-label">Web address</label>
             <input id="ed-url" class="text" type="text" placeholder="youtube.com">
+            <div class="feed-presets" id="ed-feed-presets" hidden></div>
+            <p class="feed-status" id="ed-feed-status" role="status" hidden></p>
           </div>
           <div class="field">
             <label class="field-label" for="ed-title">Name</label>
@@ -213,7 +234,13 @@
       <div class="row"><span>Clock</span>
         <div class="seg" id="set-clock"><button type="button" data-value="12">12-hour</button><button type="button" data-value="24">24-hour</button></div>
       </div>
-      <div class="row"><span>Show weather</span><input type="checkbox" class="toggle" id="set-weather"></div>
+      <span class="field-label spaced">More clocks</span>
+      <p class="muted">Scroll over the clock to switch between your time and these.</p>
+      <ul class="place-list" id="set-clock-list"></ul>
+      <div class="feed-presets" id="set-clock-presets"></div>
+      <input id="set-clock-city" class="text spaced-input" type="text" placeholder="Add a city’s time">
+      <ul class="city-results" id="set-clock-results"></ul>
+      <div class="row spaced-row"><span>Show weather</span><input type="checkbox" class="toggle" id="set-weather"></div>
       <div class="row"><span>Units</span>
         <div class="seg" id="set-units"><button type="button" data-value="f">°F</button><button type="button" data-value="c">°C</button></div>
       </div>
@@ -222,6 +249,11 @@
       <div class="row start"><button class="btn" id="set-loc-auto" type="button">Use my location</button></div>
       <input id="set-city" class="text" type="text" placeholder="Or search for a city">
       <ul class="city-results" id="set-city-results"></ul>
+      <span class="field-label spaced">More weather places</span>
+      <p class="muted">Scroll over the weather to switch between your location and these.</p>
+      <ul class="place-list" id="set-place-list"></ul>
+      <input id="set-place-city" class="text spaced-input" type="text" placeholder="Add a city">
+      <ul class="city-results" id="set-place-results"></ul>
     </section>
 
     <section class="set-section">
@@ -233,7 +265,7 @@
       <div class="row"><span>Markets</span><input type="checkbox" class="toggle" id="set-stocks"></div>
       <label class="field-label" for="set-stock-symbols">Symbols, separated by commas (up to 6)</label>
       <input id="set-stock-symbols" class="text" type="text" placeholder="^GSPC, ^DJI, ^IXIC, AAPL">
-      <p class="muted">Headlines come from Google News or your own feed. Prices come from Yahoo Finance and may be delayed. Chrome asks once before a widget reads its site.</p>
+      <p class="muted">Tip: for photos and headlines on a tile, try <strong>+ → Add a news feed</strong>. Headlines come from Google News or your own feed. Prices come from Yahoo Finance and may be delayed. Chrome asks once before a widget reads its site.</p>
     </section>
 
     <section class="set-section">
@@ -283,6 +315,7 @@
   <script src="store.js"></script>
   <script src="weather.js"></script>
   <script src="widgets.js"></script>
+  <script src="feeds.js"></script>
   <script src="wallpapers.js"></script>
   <script src="games/core.js"></script>
   <script src="games/g2048.js"></script>

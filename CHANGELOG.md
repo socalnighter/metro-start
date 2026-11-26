@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.15.0
+- New: make a folder by dragging one tile onto another. Hold it over the middle of the other tile for half a second until the outline says "Make a folder", then let go. The folder is named after both tiles ("Gmail + Drive"), takes the other tile's spot, size and color, and nothing else moves. Undo splits them again. Works inside folders too (it makes a subfolder). A quick drop, or a drop near a tile's edge, still just moves the tile.
+
+## 1.14.1
+- Start now uses as many rows as fit on your screen (up to 12) instead of always 6, so a large tile can go under another large tile. Tiles you've already placed keep their spots.
+- Fixed a harmless error when saving the tile editor right after typing an address.
+
+## 1.14.0
+- New: news feed tiles. Add one from **+ → Add a news feed** (BBC News, NPR, The New York Times, The Guardian, The Verge, Ars Technica, Google News), or paste any site's address and Metro Start finds its feed. Large, wide and medium tiles show the newest story's photo and headline; small tiles show the site's icon and a count of new stories. Tiles don't flip or rotate; they update quietly every 20 minutes and keep the last stories for when you're offline. Right-click → **All headlines** shows the latest stories with thumbnails.
+- New: more clocks. Scroll over the clock (or use the arrow keys) to switch between your own time and other cities. Starts with Los Angeles, New York, UTC and New Delhi (IST); add any city or remove these in Personalize. A clock in your own time zone is skipped.
+- New: more weather places. Add cities in Personalize, then scroll over the weather to switch between them and your location.
+
 ## 1.13.0
 - The right-click menu is now short, with submenus. "Move to folder" opens a list of your folders, and folders that have subfolders open their own submenu, so Delete is always on screen. Submenus open on hover or click, and work with the arrow keys (→ opens, ← goes back, Esc closes).
 - "Add a game" in the + menu is a submenu too.

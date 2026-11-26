@@ -259,11 +259,90 @@ button { font-family: var(--font); }
 .tile-count { display: flex; align-items: center; gap: 3px; }
 .chev { font-size: 17px; line-height: 1; margin-top: -2px; }
 
+/* news feed tiles: newest story's photo and headline */
+.tile.feed { display: block; }
+.feed-photo { position: absolute; inset: 0; }
+.feed-photo img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.feed-text {
+  position: absolute;
+  left: 0; right: 0; bottom: 0; top: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 10px 12px 9px;
+}
+.feed-headline {
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+.feed-note { font-size: 13px; line-height: 1.35; opacity: .9; }
+.feed-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; opacity: .9; }
+.feed-meta-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.feed-icon { flex: none; display: grid; width: 16px; height: 16px; }
+.feed-icon .tile-icon { width: 100%; height: 100%; }
+.feed-icon .tile-letter { font-size: 13px; }
+/* with a photo: the headline sits on a dark fade at the bottom (large, medium) */
+.tile.feed.has-photo .feed-text { background: linear-gradient(to top, rgba(0, 0, 0, .82) 0, rgba(0, 0, 0, .55) 45%, transparent 78%); text-shadow: 0 1px 3px rgba(0, 0, 0, .6); }
+.tile.feed.size-large .feed-headline { font-size: 20px; line-height: 1.22; -webkit-line-clamp: 4; }
+.tile.feed.size-large .feed-text { padding: 14px 16px 12px; gap: 8px; }
+.tile.feed.size-large .feed-meta { font-size: 13px; }
+.tile.feed.size-medium .feed-headline { font-size: 13px; -webkit-line-clamp: 3; }
+.tile.feed.size-medium.has-photo .feed-photo { bottom: 0; }
+/* wide: photo on the left half, text on the right */
+.tile.feed.size-wide.has-photo .feed-photo { right: 50%; }
+.tile.feed.size-wide.has-photo .feed-text { left: 50%; background: none; text-shadow: none; justify-content: space-between; padding: 10px 12px 9px; }
+.tile.feed.size-wide .feed-headline { font-size: 15px; -webkit-line-clamp: 5; }
+.tile.feed.size-wide:not(.has-photo) .feed-headline { font-size: 17px; -webkit-line-clamp: 4; }
+.tile.feed.size-small .tile-face { padding-bottom: 0; }
+.feed-badge {
+  position: absolute; right: 4px; top: 4px;
+  min-width: 18px; padding: 0 5px;
+  font-size: 11px; line-height: 18px; font-weight: 700; text-align: center;
+  color: #000; background: #fff;
+}
+
+/* all headlines band */
+.band-spacer { flex: 1; }
+.feed-title { margin: 0 !important; }
+.feed-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px 20px; max-height: 64vh; overflow: auto; }
+.feed-item { display: flex; gap: 12px; padding: 8px; color: #fff; text-decoration: none; outline: none; }
+.feed-item:hover, .feed-item:focus-visible { background: rgba(255, 255, 255, .1); }
+.feed-thumb { flex: none; width: 96px; height: 64px; object-fit: cover; background: rgba(255, 255, 255, .08); }
+.feed-item-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.feed-item-title { font-size: 15px; line-height: 1.3; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.feed-item-meta { font-size: 12px; opacity: .7; }
+.feed-empty { padding: 8px; opacity: .85; display: flex; align-items: center; gap: 12px; }
+#feed-overlay { z-index: 22; }
+
+/* editor: ready-made feeds and the lookup status */
+.feed-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { padding: 4px 10px; font: inherit; font-size: 13px; color: #fff; background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .25); cursor: pointer; }
+.chip:hover { background: rgba(255, 255, 255, .2); }
+.feed-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 13px; opacity: .9; }
+
 /* drag and drop */
 .tile.dragging { opacity: .3; }
 .tile.drop-before { box-shadow: inset 5px 0 0 #fff; }
 .tile.drop-after { box-shadow: inset -5px 0 0 #fff; }
 .tile.drop-into { box-shadow: inset 0 0 0 4px #fff; transform: scale(1.05); }
+/* held over another tile: they'll become a folder */
+.tile.drop-combine { box-shadow: inset 0 0 0 3px #fff; transform: scale(.94); transition: transform .12s; }
+.tile.drop-combine::after {
+  content: 'Make a folder';
+  position: absolute; inset: auto 0 0 0;
+  padding: 5px 8px;
+  font-size: 12px; font-weight: 700; text-align: center;
+  color: #fff; background: rgba(0, 0, 0, .7);
+  z-index: 3;
+}
+.tile.size-small.drop-combine::after { content: '+'; font-size: 20px; line-height: 1; padding: 2px 0 4px; }
 .drop-ghost { pointer-events: none; outline: 3px dashed rgba(255, 255, 255, .85); outline-offset: -3px; background: rgba(255, 255, 255, .12); z-index: 1; }
 
 /* entrance: tiles swing in from the right, column by column */
@@ -310,6 +389,18 @@ button { font-family: var(--font); }
 .w-place { opacity: .8; }
 .w-range { max-width: 260px; }
 #info-bar { flex-wrap: nowrap; row-gap: 14px; }
+/* several clocks / weather places: dots below show which one, scroll to switch */
+#clock-widget, #weather-widget { position: relative; }
+#clock-widget { outline: none; }
+#clock-widget:focus-visible, #weather-widget:focus-visible { outline: 2px solid rgba(255, 255, 255, .7); outline-offset: 6px; }
+.cycle-dots { position: absolute; left: 0; bottom: -18px; display: flex; gap: 7px; }
+#weather-widget .cycle-dots { left: 28px; }
+.cycle-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255, 255, 255, .35); box-shadow: 0 1px 4px rgba(0, 0, 0, .3); cursor: pointer; }
+.cycle-dot.on { background: #fff; }
+#date .clock-place { font-weight: 400; margin-right: 10px; }
+#date .clock-date { opacity: .85; }
+#time, #date, .w-temp, .w-meta { transition: opacity .15s; }
+
 #clock-widget, #weather-widget, #stocks-widget { flex: none; }
 .widget {
   min-width: 0;
@@ -1056,6 +1147,15 @@ input[type="color"] { width: 34px; height: 34px; padding: 0; border: 2px solid r
 }
 .city-results button:hover { background: rgba(255, 255, 255, .16); }
 .city-results small { opacity: .7; margin-left: 6px; }
+.place-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.place-list li { display: flex; align-items: center; gap: 6px; padding: 5px 0 5px 10px; border-left: 2px solid rgba(255, 255, 255, .35); }
+.place-list li + li { margin-top: 4px; }
+.place-name { flex: 1; min-width: 0; font-size: 14px; }
+.place-name small { margin-left: 8px; opacity: .65; }
+.place-btn { width: 28px; height: 28px; padding: 0; font: inherit; font-size: 16px; color: inherit; background: none; border: 1px solid transparent; cursor: pointer; }
+.place-btn:hover { border-color: rgba(255, 255, 255, .5); }
+.spaced-row { margin-top: 16px; }
+
 
 /* ---------- toast ---------- */
 #toast {

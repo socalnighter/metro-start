@@ -8,7 +8,7 @@ const BACKGROUNDS = ['#1f0068', '#2b0d4f', '#001e4e', '#004050', '#00451f', '#4e
 const SIZES = { small: [1, 1], medium: [2, 2], wide: [4, 2], large: [4, 4] };
 const SIZE_NAMES = { small: 'Small', medium: 'Medium', wide: 'Wide', large: 'Large' };
 const UNIT_PX = { compact: 60, normal: 70, large: 86 };
-const MAX_ROWS = 6;
+const MAX_ROWS = 12; // Start uses as many rows as fit on the screen, up to this
 const SIZE_GLYPHS = {
   small: '<rect x="7" y="7" width="6" height="6"/>',
   medium: '<rect x="4" y="4" width="12" height="12"/>',
@@ -38,6 +38,14 @@ const DEFAULT_SETTINGS = {
   stocks: ['^GSPC', '^DJI', '^IXIC'],
   units: 'f',
   location: { mode: 'auto' },
+  // extra clocks and weather places; scroll over the clock or weather to switch between them
+  clocks: [
+    { tz: 'America/Los_Angeles', name: 'Los Angeles' },
+    { tz: 'America/New_York', name: 'New York' },
+    { tz: 'UTC', name: 'UTC' },
+    { tz: 'Asia/Kolkata', name: 'New Delhi' },
+  ],
+  places: [],
 };
 
 // ---------------------------------------------------------------- helpers
@@ -241,6 +249,12 @@ function sanitizeTile(t, depth = 0) {
     const g = Games.LIST[t.game];
     return g ? { ...base, type: 'game', game: t.game, title: base.title || g.title } : null;
   }
+  if (t.type === 'feed') {
+    const url = normalizeUrl(t.url);
+    if (!hostOf(url)) return null;
+    const site = hostOf(normalizeUrl(t.site)) ? normalizeUrl(t.site) : '';
+    return { ...base, type: 'feed', url, site, title: base.title || hostOf(site || url) };
+  }
   const url = normalizeUrl(t.url);
   if (!url) return null;
   const mode = ['favicon', 'letter', 'image'].includes(t.icon && t.icon.mode) ? t.icon.mode : 'favicon';
@@ -262,7 +276,15 @@ function mergeSettings(s) {
     ...s,
     bg: { ...DEFAULT_SETTINGS.bg, ...(s.bg || {}) },
     location: { ...DEFAULT_SETTINGS.location, ...(s.location || {}) },
+    clocks: Array.isArray(s.clocks) ? s.clocks.filter(c => c && validTz(c.tz)).slice(0, MAX_CLOCKS).map(c => ({ tz: c.tz, name: String(c.name || c.tz).slice(0, 60) })) : structuredClone(DEFAULT_SETTINGS.clocks),
+    places: Array.isArray(s.places) ? s.places.filter(p => p && Number.isFinite(p.lat) && Number.isFinite(p.lon)).slice(0, MAX_PLACES).map(p => ({ name: String(p.name || '').slice(0, 60), lat: p.lat, lon: p.lon })) : [],
   };
+}
+const MAX_CLOCKS = 8;
+const MAX_PLACES = 6;
+function validTz(tz) {
+  if (typeof tz !== 'string' || !tz) return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; }
 }
 
 async function load() {
@@ -481,7 +503,50 @@ function displayUrl(url) {
     return u.hostname.replace(/^www\./, '') + (path === '/' ? '' : path);
   } catch { return url; }
 }
+// ---- news feed tiles: the newest story's photo and headline (still; they update quietly when the feed refreshes)
+const feedHome = t => t.site || (() => { try { return new URL(t.url).origin; } catch { return t.url; } })();
+function feedTop(t) {
+  const c = Feeds.cached(t.url);
+  return c && c.items && c.items[0] ? c.items[0] : null;
+}
+function feedTileEl(t, { draggable = true, preview = false } = {}) {
+  const [cols, rows] = SIZES[t.size] || SIZES.medium;
+  const c = Feeds.cached(t.url);
+  const items = (c && c.items) || [];
+  const top = items[0] || (preview ? { title: 'The newest story from this feed shows here', image: '', date: 0 } : null);
+  const photo = top && top.image && t.size !== 'small' ? top.image : '';
+  const el = h(preview ? 'div' : 'a', {
+    class: `tile size-${t.size} feed` + (photo ? ' has-photo' : ''),
+    style: { background: t.color, ...(preview ? {} : { gridColumn: `span ${cols}`, gridRow: `span ${rows}` }) },
+    dataset: preview ? {} : { id: t.id },
+    draggable: draggable && !preview ? 'true' : 'false',
+    href: preview ? null : (top && top.link) || feedHome(t),
+    title: preview ? null : top ? `${t.title}\n${top.title}` : t.title,
+  });
+  const icon = h('span', { class: 'feed-icon' }, tileIcon({ title: t.title, url: feedHome(t), icon: { mode: 'favicon' } }));
+  if (t.size === 'small') {
+    const fresh = c && c.seen ? items.filter(i => i.date > c.seen).length : 0;
+    el.append(h('div', { class: 'tile-face' }, tileIcon({ title: t.title, url: feedHome(t), icon: { mode: 'favicon' } })));
+    if (fresh) el.append(h('span', { class: 'feed-badge' }, fresh > 9 ? '9+' : String(fresh)));
+    return el;
+  }
+  if (photo) {
+    el.append(h('div', { class: 'feed-photo' }, h('img', {
+      src: photo, alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer', draggable: 'false',
+      onerror: e => { e.target.closest('.feed-photo').remove(); el.classList.remove('has-photo'); },
+    })));
+  }
+  const meta = [t.title, top && Feeds.ago(top.date)].filter(Boolean).join(' · ');
+  el.append(h('div', { class: 'feed-text' },
+    top
+      ? h('span', { class: 'feed-headline' }, top.title)
+      : h('span', { class: 'feed-note' }, c && c.error ? c.error : c && c.needsAccess ? 'Select to let Metro Start read this feed' : 'Loading stories…'),
+    h('span', { class: 'feed-meta' }, icon, h('span', { class: 'feed-meta-text' }, meta))));
+  return el;
+}
+
 function tileEl(t, { draggable = true, preview = false } = {}) {
+  if (t.type === 'feed') return feedTileEl(t, { draggable, preview });
   const isFolder = t.type === 'folder';
   const isGame = t.type === 'game';
   const isButton = (isFolder || isGame) && !preview;
@@ -721,6 +786,17 @@ function bindTileEvents(container, getFolderId) {
     const t = f.tile;
     if (t.type === 'folder') { e.preventDefault(); flipThen(el, t, () => openFolder(t.id)); return; }
     if (t.type === 'game') { e.preventDefault(); flipThen(el, t, () => openGame(t.game)); return; }
+    if (t.type === 'feed') {
+      const c = Feeds.cached(t.url);
+      if (c && c.needsAccess) { e.preventDefault(); allowFeed(t); return; }
+      const top = feedTop(t);
+      if (t.size === 'small' || !top) { e.preventDefault(); openHeadlines(t.id); return; }
+      if (e.ctrlKey || e.metaKey || e.shiftKey) return; // the browser opens the story in a new tab
+      e.preventDefault();
+      Feeds.markSeen(t.url);
+      flipThen(el, t, () => openUrl(top.link, false));
+      return;
+    }
     const newTab = e.ctrlKey || e.metaKey || e.shiftKey;
     if (newTab) {
       // the browser opens ordinary links in a new tab by itself
@@ -818,6 +894,49 @@ function dropMode(el, e) {
   if (canNest && rx > 0.22 && rx < 0.78) return 'into';
   return rx < 0.5 ? 'before' : 'after';
 }
+
+// ---- hold a tile over the middle of another tile to make a folder of the two
+const COMBINE_HOLD = 500; // ms; a quick pass or a drop near the edge still just moves the tile
+function overMiddle(el, e) {
+  const r = el.getBoundingClientRect();
+  const rx = (e.clientX - r.left) / r.width;
+  const ry = (e.clientY - r.top) / r.height;
+  return rx > 0.2 && rx < 0.8 && ry > 0.2 && ry < 0.8;
+}
+// Called on every dragover with the tile under the pointer (or null). True once the hold is complete.
+function combineArmed(el, e) {
+  const target = el && el.dataset.id !== drag.id ? findTile(el.dataset.id) : null;
+  const dragged = findTile(drag.id);
+  const ok = target && dragged && target.tile.type !== 'folder' && dragged.tile.type !== 'folder' && overMiddle(el, e);
+  if (!ok) { drag.hold = null; return false; }
+  const now = performance.now();
+  if (!drag.hold || drag.hold.id !== target.tile.id) drag.hold = { id: target.tile.id, since: now };
+  return now - drag.hold.since >= COMBINE_HOLD;
+}
+function combineTiles(dragId, targetId) {
+  const a = findTile(targetId);
+  const b = findTile(dragId);
+  if (!a || !b || a.tile.type === 'folder' || b.tile.type === 'folder') return;
+  const snapshot = JSON.stringify(tiles);
+  // the folder takes the target's spot and size, so nothing else on the screen moves
+  const inFolder = !!a.parent;
+  const shown = (inFolder ? folderSpots : lastSpots).get(a.tile.id);
+  for (const x of a.list) { // keep everything else exactly where it is shown now
+    const sp = (inFolder ? folderSpots : lastSpots).get(x.id);
+    if (sp && x.id !== b.tile.id) x.pos = { g: sp.group, c: sp.col, r: sp.row };
+  }
+  const folder = {
+    id: uid(), type: 'folder',
+    title: `${a.tile.title} + ${b.tile.title}`.slice(0, 80),
+    color: a.tile.color, size: a.tile.size, children: [],
+    ...(shown ? { pos: { g: shown.group, c: shown.col, r: shown.row } } : a.tile.pos ? { pos: { ...a.tile.pos } } : {}),
+  };
+  a.list.splice(a.list.indexOf(a.tile), 1, folder);
+  b.list.splice(b.list.indexOf(b.tile), 1);
+  for (const t of [a.tile, b.tile]) { delete t.pos; folder.children.push(t); }
+  commit();
+  toast(`Made the folder “${folder.title}”`, { label: 'Undo', run: () => { tiles = JSON.parse(snapshot); commit(); } });
+}
 // ---- Folder drag and drop by position: the whole folder band takes the drop
 const folderDragOK = () => {
   const f = drag && openFolderId && findFolder(openFolderId);
@@ -852,6 +971,7 @@ folderBand.addEventListener('dragover', e => {
   e.dataTransfer.dropEffect = 'move';
   clearDropMarks();
   const el = e.target.closest && e.target.closest('#folder-grid .tile');
+  if (combineArmed(el, e)) { el.classList.add('drop-combine'); return; }
   if (el && el.dataset.id !== drag.id && dropMode(el, e) === 'into') { el.classList.add('drop-into'); return; }
   showFolderGhost(folderSpotUnder(e));
 });
@@ -861,6 +981,7 @@ folderBand.addEventListener('drop', e => {
   e.stopPropagation();
   const id = drag.id;
   const el = e.target.closest && e.target.closest('#folder-grid .tile');
+  if (combineArmed(el, e)) { clearDropMarks(); combineTiles(id, el.dataset.id); return; }
   const into = el && el.dataset.id !== id && dropMode(el, e) === 'into';
   const spot = into ? null : folderSpotUnder(e);
   clearDropMarks();
@@ -880,7 +1001,9 @@ scroller.addEventListener('dragover', e => {
   if (e.clientX > box.right - edge) scroller.scrollLeft += 18;
   else if (e.clientX < box.left + edge) scroller.scrollLeft -= 18;
   const el = e.target.closest && e.target.closest('#grid .tile');
-  // over the middle of a folder: file it inside; anywhere else: show where it will land
+  // held over the middle of a tile: make a folder; over the middle of a folder: file it inside;
+  // anywhere else: show where it will land
+  if (combineArmed(el, e)) { el.classList.add('drop-combine'); return; }
   if (el && el.dataset.id !== drag.id && dropMode(el, e) === 'into') { el.classList.add('drop-into'); return; }
   showGhost(spotUnder(e));
 });
@@ -889,6 +1012,7 @@ scroller.addEventListener('drop', e => {
   e.preventDefault();
   const id = drag.id;
   const el = e.target.closest && e.target.closest('#grid .tile');
+  if (combineArmed(el, e)) { clearDropMarks(); combineTiles(id, el.dataset.id); return; }
   const intoFolder = el && el.dataset.id !== id && dropMode(el, e) === 'into';
   const spot = intoFolder ? null : spotUnder(e);
   clearDropMarks();
@@ -938,7 +1062,7 @@ function showGhost(sp) {
 }
 function clearDropMarks() {
   document.querySelectorAll('.drop-ghost').forEach(x => x.remove());
-  document.querySelectorAll('.drop-before, .drop-after, .drop-into').forEach(x => x.classList.remove('drop-before', 'drop-after', 'drop-into'));
+  document.querySelectorAll('.drop-before, .drop-after, .drop-into, .drop-combine').forEach(x => x.classList.remove('drop-before', 'drop-after', 'drop-into', 'drop-combine'));
 }
 
 // ---------------------------------------------------------------- context menu
@@ -1040,6 +1164,7 @@ function addMenu(x, y, parentId = null) {
   showMenu(x, y, [
     { label: 'Add a tile', action: () => openEditor({ type: 'link', parentId }) },
     { label: 'Add a folder', action: () => openEditor({ type: 'folder', parentId }) },
+    { label: 'Add a news feed', sub: feedMenuItems(parentId) },
     { label: 'Add a game', sub: gameItems(parentId) },
     ...(parentId ? [] : [{ label: 'Import bookmarks…', action: openBookmarkImport }]),
     '-',
@@ -1092,6 +1217,12 @@ function tileMenu(e, folderId) {
   const items = [];
   if (t.type === 'folder') items.push({ label: 'Open', action: () => openFolder(t.id) });
   else if (t.type === 'game') items.push({ label: 'Play', action: () => openGame(t.game) });
+  else if (t.type === 'feed') {
+    const top = feedTop(t);
+    if (top) items.push({ label: 'Open top story', action: () => { Feeds.markSeen(t.url); openUrl(top.link, false); } });
+    items.push({ label: 'All headlines', action: () => openHeadlines(t.id) });
+    items.push({ label: 'Open site', action: () => openUrl(feedHome(t), false) });
+  }
   else items.push({ label: 'Open in new tab', action: () => openUrl(t.url, true) });
   items.push({ label: 'Edit…', action: () => openEditor({ tile: t }) });
   items.push({ sizes: true, current: t.size, onPick: s => { t.size = s; const sp = (f.parent ? folderSpots : lastSpots).get(t.id); if (sp) placeTileAt(t.id, { g: sp.group, c: sp.col, r: sp.row }); else commit(); } });
@@ -1182,6 +1313,7 @@ const ed = {
   iconField: $('#ed-icon-field'), iconMode: $('#ed-icon-mode'), imageRow: $('#ed-image-row'),
   imageUrl: $('#ed-image-url'), imageUpload: $('#ed-image-upload'), imageFile: $('#ed-image-file'),
   imageFill: $('#ed-image-fill'), preview: $('#ed-preview'), cancel: $('#ed-cancel'), colorCustom: null,
+  urlLabel: $('#ed-url-label'), feedPresets: $('#ed-feed-presets'), feedStatus: $('#ed-feed-status'), save: $('#ed-save'),
 };
 let editing = null;
 
@@ -1216,13 +1348,15 @@ function openEditor({ tile = null, type = 'link', parentId = null } = {}) {
   const draft = tile ? structuredClone(tile) : {
     type, title: '', size: 'medium', color: PALETTE[Math.floor(Math.random() * (PALETTE.length - 1))],
     ...(type === 'folder' ? { children: [] } : { url: '', icon: { mode: 'favicon' } }),
+    ...(type === 'feed' ? { size: 'wide' } : {}),
   };
   if (!draft.icon) draft.icon = { mode: 'favicon' };
   if (!draft.children) draft.children = [];
   const found = tile && findTile(tile.id);
   editing = { draft, id: tile ? tile.id : null, parentId: found && found.parent ? found.parent.id : parentId };
 
-  ed.heading.textContent = tile ? (tile.type === 'folder' ? 'Edit folder' : tile.type === 'game' ? 'Edit game tile' : 'Edit tile') : (type === 'folder' ? 'New folder' : 'Add a tile');
+  ed.heading.textContent = tile ? (tile.type === 'folder' ? 'Edit folder' : tile.type === 'game' ? 'Edit game tile' : tile.type === 'feed' ? 'Edit news feed' : 'Edit tile') : (type === 'folder' ? 'New folder' : type === 'feed' ? 'Add a news feed' : 'Add a tile');
+  feedStatus('');
   ed.typeField.hidden = !!tile;
   ed.title.value = draft.title || '';
   ed.url.value = draft.url || '';
@@ -1233,15 +1367,35 @@ function openEditor({ tile = null, type = 'link', parentId = null } = {}) {
   ed.imageFill.checked = !!draft.icon.fill;
   syncEditor();
   openOverlay(ed.overlay);
-  setTimeout(() => (draft.type === 'link' && !tile ? ed.url : ed.title).focus(), 50);
+  setTimeout(() => ((draft.type === 'link' || draft.type === 'feed') && !tile ? ed.url : ed.title).focus(), 50);
 }
+
+function feedStatus(text, action) {
+  ed.feedStatus.hidden = !text;
+  ed.feedStatus.replaceChildren(text || '', action ? ' ' : '', action ? h('button', { type: 'button', class: 'btn btn-sm', onclick: action.run }, action.label) : '');
+}
+ed.feedPresets.append(...Feeds.PRESETS.map(p => h('button', {
+  type: 'button', class: 'chip', onclick: () => {
+    if (!editing) return;
+    ed.url.value = p.feed;
+    if (!ed.title.value.trim()) ed.title.value = p.name;
+    editing.draft.color = p.color;
+    editing.draft.site = p.site;
+    markSwatch(ed.colors, p.color);
+    feedStatus('');
+    renderPreview();
+  },
+}, p.name)));
 
 function syncEditor() {
   const d = editing.draft;
   setSeg(ed.type, d.type);
   setSeg(ed.size, d.size);
-  ed.urlField.hidden = d.type !== 'link';
+  ed.urlField.hidden = d.type !== 'link' && d.type !== 'feed';
   ed.iconField.hidden = d.type !== 'link';
+  ed.urlLabel.textContent = d.type === 'feed' ? 'Site or feed address' : 'Web address';
+  ed.url.placeholder = d.type === 'feed' ? 'bbc.com, or a feed’s address' : 'youtube.com';
+  ed.feedPresets.hidden = d.type !== 'feed' || !!editing.id;
   setSeg(ed.iconMode, d.icon.mode);
   ed.imageRow.hidden = d.icon.mode !== 'image';
   markSwatch(ed.colors, d.color);
@@ -1250,12 +1404,13 @@ function syncEditor() {
 }
 
 function renderPreview() {
+  if (!editing) return; // the editor closed before a delayed preview update ran
   const d = editing.draft;
   const url = normalizeUrl(ed.url.value);
   const shown = {
     ...d,
     url: url || 'https://example.com',
-    title: ed.title.value.trim() || (d.type === 'folder' ? 'Folder' : d.type === 'game' ? Games.LIST[d.game].title : url ? prettyName(url) : 'New tile'),
+    title: ed.title.value.trim() || (d.type === 'folder' ? 'Folder' : d.type === 'game' ? Games.LIST[d.game].title : d.type === 'feed' ? (url ? prettyName(url) : 'News') : url ? prettyName(url) : 'New tile'),
   };
   ed.preview.replaceChildren(tileEl(shown, { preview: true }));
 }
@@ -1269,14 +1424,17 @@ function closeEditor() {
 ed.colorCustom = buildSwatches(ed.colors, PALETTE, c => { editing.draft.color = c; markSwatch(ed.colors, c); renderPreview(); });
 onSeg(ed.type, v => {
   editing.draft.type = v;
-  ed.heading.textContent = v === 'folder' ? 'New folder' : 'Add a tile';
+  ed.heading.textContent = v === 'folder' ? 'New folder' : v === 'feed' ? 'Add a news feed' : 'Add a tile';
+  if (v === 'feed' && editing.draft.size === 'medium') editing.draft.size = 'wide';
+  if (!editing.draft.icon) editing.draft.icon = { mode: 'favicon' };
+  feedStatus('');
   syncEditor();
-  (v === 'link' ? ed.url : ed.title).focus();
+  (v === 'folder' ? ed.title : ed.url).focus();
 });
 onSeg(ed.size, v => { editing.draft.size = v; renderPreview(); });
 onSeg(ed.iconMode, v => { editing.draft.icon.mode = v; syncEditor(); });
 ed.title.addEventListener('input', renderPreview);
-ed.url.addEventListener('input', () => { ed.url.classList.remove('invalid'); renderPreviewSoon(); });
+ed.url.addEventListener('input', () => { ed.url.classList.remove('invalid'); if (editing) delete editing.draft.site; feedStatus(''); renderPreviewSoon(); });
 ed.imageUrl.addEventListener('input', () => {
   const d = editing.draft;
   d.icon.src = normalizeUrl(ed.imageUrl.value);
@@ -1302,6 +1460,7 @@ ed.form.addEventListener('submit', e => {
   e.preventDefault();
   const d = editing.draft;
   d.title = ed.title.value.trim();
+  if (d.type === 'feed') { saveFeedFromEditor(); return; }
   if (d.type === 'link') {
     d.url = normalizeUrl(ed.url.value);
     if (!d.url || (!hostOf(d.url) && !SPECIAL_SCHEME.test(d.url))) {
@@ -1332,6 +1491,57 @@ ed.form.addEventListener('submit', e => {
   saveEditedTile(d, editId, parentId);
 });
 
+// A news feed: get Chrome's OK for the site (straight from the click), find its feed, then save the tile
+function saveFeedFromEditor() {
+  const state = editing;
+  const d = state.draft;
+  const url = normalizeUrl(ed.url.value);
+  if (!hostOf(url)) {
+    ed.url.classList.add('invalid');
+    ed.url.focus();
+    toast('Enter a site or feed address, like bbc.com');
+    return;
+  }
+  const original = state.id && findTile(state.id);
+  const finish = feed => {
+    if (editing !== state) return;
+    d.url = feed.feed;
+    d.site = d.site || feed.site || '';
+    d.title = d.title || feed.title || prettyName(url);
+    delete d.icon;
+    delete d.children;
+    feedStatus('');
+    ed.save.disabled = false;
+    saveEditedTile(d, state.id, state.parentId);
+    updateFeedTiles(d.url);
+  };
+  // editing an existing feed tile without changing its address: nothing to look up
+  if (original && original.tile.url === url) { finish({ feed: url, site: original.tile.site }); return; }
+  const lookUp = async () => {
+    feedStatus('Looking for the news feed…');
+    ed.save.disabled = true;
+    try {
+      const feed = await Feeds.discover(url);
+      await Feeds.remember(feed.feed, feed);
+      finish(feed);
+    } catch (err) {
+      if (editing !== state) return;
+      ed.save.disabled = false;
+      if (err.needs) {
+        feedStatus(err.message, {
+          label: `Allow ${hostOf(err.needs)}`,
+          run: () => chrome.permissions.request({ origins: Feeds.originsFor(err.needs) }).then(ok => (ok ? lookUp() : feedStatus('Chrome needs your OK to read that feed.')), () => {}),
+        });
+      } else feedStatus(err.message || 'Couldn’t read that feed.');
+    }
+  };
+  if (!hasChrome || !chrome.permissions) { lookUp(); return; }
+  chrome.permissions.request({ origins: Feeds.originsFor(url) }).then(ok => {
+    if (ok) lookUp();
+    else feedStatus('Chrome needs your OK for this tile to read the site.');
+  }, () => feedStatus('Chrome needs your OK for this tile to read the site.'));
+}
+
 function saveEditedTile(d, editId, parentId) {
   let newFolderId = null;
   if (editId) {
@@ -1361,29 +1571,94 @@ function saveEditedTile(d, editId, parentId) {
 const timeEl = $('#time');
 const dateEl = $('#date');
 let lastMinute = -1;
+const clockWidget = $('#clock-widget');
+const LOCAL_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
+// Your own time first, then the extra clocks (one that matches your own time zone is skipped)
+const clockList = () => [{ tz: '', name: '' }, ...settings.clocks.filter(c => c.tz !== LOCAL_TZ)];
+let clockIndex = 0;
+const TZ_ABBR = { 'Asia/Kolkata': 'IST', 'Asia/Calcutta': 'IST' };
+function tzAbbr(tz, date = new Date()) {
+  if (TZ_ABBR[tz]) return TZ_ABBR[tz];
+  try { return new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }).formatToParts(date).find(p => p.type === 'timeZoneName').value; } catch { return ''; }
+}
 
 function tickClock(force = false) {
   const now = new Date();
   if (!force && now.getMinutes() === lastMinute) return;
   lastMinute = now.getMinutes();
+  const list = clockList();
+  if (clockIndex >= list.length) clockIndex = 0;
+  const c = list[clockIndex];
+  const zone = c.tz ? { timeZone: c.tz } : {};
   const parts = new Intl.DateTimeFormat(undefined, {
     hour: settings.clock24 ? '2-digit' : 'numeric',
     minute: '2-digit',
     hourCycle: settings.clock24 ? 'h23' : 'h12',
+    ...zone,
   }).formatToParts(now);
   const time = parts.filter(p => p.type !== 'dayPeriod').map(p => p.value).join('').trim();
   const period = (parts.find(p => p.type === 'dayPeriod') || {}).value || '';
   timeEl.replaceChildren(time, period ? h('span', { class: 'ampm' }, period) : '');
-  dateEl.textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  const date = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', ...zone });
+  if (c.tz) {
+    const abbr = tzAbbr(c.tz, now);
+    const label = abbr && abbr !== c.name ? `${c.name} (${abbr})` : c.name;
+    dateEl.replaceChildren(h('span', { class: 'clock-place' }, label), h('span', { class: 'clock-date' }, date));
+  } else dateEl.textContent = date;
+  clockWidget.classList.toggle('remote', !!c.tz);
+  clockWidget.title = list.length > 1 ? 'Scroll to see your other clocks' : '';
+  cycleDots($('#clock-dots'), list.length, clockIndex, i => { clockIndex = i; tickClock(true); });
 }
 
+// ---- switching clocks and weather places with the mouse wheel (or arrow keys when focused)
+function cycleDots(el, n, index, pick) {
+  el.hidden = n < 2;
+  if (n < 2) { el.replaceChildren(); return; }
+  el.replaceChildren(...Array.from({ length: n }, (_, i) => h('span', { class: 'cycle-dot' + (i === index ? ' on' : ''), onclick: e => { e.stopPropagation(); pick(i); } })));
+}
+function onCycle(el, count, step) {
+  let acc = 0;
+  let lock = 0;
+  el.addEventListener('wheel', e => {
+    if (count() < 2) return;
+    e.preventDefault();
+    if (performance.now() < lock) return;
+    const d = (Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX) * (e.deltaMode === 1 ? 30 : e.deltaMode === 2 ? 300 : 1);
+    acc += d;
+    if (Math.abs(acc) < 40) return; // trackpads send many small steps; one notch of a wheel is about 100
+    step(acc > 0 ? 1 : -1);
+    acc = 0;
+    lock = performance.now() + 220;
+  }, { passive: false });
+  el.addEventListener('keydown', e => {
+    if (count() < 2) return;
+    const dir = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+    if (dir) { e.preventDefault(); step(dir); }
+  });
+}
+onCycle(clockWidget, () => clockList().length, dir => {
+  const n = clockList().length;
+  clockIndex = (clockIndex + dir + n) % n;
+  tickClock(true);
+});
+
 let weatherTimer = null;
+// Your main location first, then the extra weather places
+const placeList = () => [null, ...settings.places];
+let placeIndex = 0;
+let weatherRun = 0;
 async function refreshWeather(force = false) {
   clearTimeout(weatherTimer);
   if (!settings.showWeather || settings.widgetPos === 'hidden') return;
+  const places = placeList();
+  if (placeIndex >= places.length) placeIndex = 0;
+  const run = ++weatherRun;
   weatherWidget.classList.add('loading');
+  cycleDots($('#weather-dots'), places.length, placeIndex, i => { placeIndex = i; refreshWeather(); });
+  weatherWidget.title = places.length > 1 ? 'Scroll to see your other weather places' : 'Weather';
   try {
-    const w = await Weather.get(settings, { force });
+    const w = await Weather.get(settings, { force, place: places[placeIndex] });
+    if (run !== weatherRun) return; // the person already scrolled on to another place
     const d = Weather.describe(w.code, w.isDay);
     $('#w-icon').innerHTML = Weather.icon(d.icon);
     $('#w-temp').textContent = `${w.temp}°`;
@@ -1391,8 +1666,9 @@ async function refreshWeather(force = false) {
     $('#w-range').textContent = `High ${w.hi}°, low ${w.lo}°`;
     $('#w-place').textContent = w.place || '';
     weatherWidget.dataset.place = w.place || '';
-    weatherWidget.title = w.place ? `Weather for ${w.place}` : 'Weather';
+    if (places.length < 2) weatherWidget.title = w.place ? `Weather for ${w.place}` : 'Weather';
   } catch (err) {
+    if (run !== weatherRun) return;
     console.info('Weather unavailable:', err && err.message);
     $('#w-icon').innerHTML = Weather.icon('cloud');
     $('#w-temp').textContent = '--°';
@@ -1402,10 +1678,17 @@ async function refreshWeather(force = false) {
     weatherWidget.title = 'Try again';
     weatherWidget.dataset.place = '';
   } finally {
-    weatherWidget.classList.remove('loading');
-    weatherTimer = setTimeout(() => refreshWeather(), 30 * 60 * 1000);
+    if (run === weatherRun) {
+      weatherWidget.classList.remove('loading');
+      weatherTimer = setTimeout(() => refreshWeather(), 30 * 60 * 1000);
+    }
   }
 }
+onCycle(weatherWidget, () => placeList().length, dir => {
+  const n = placeList().length;
+  placeIndex = (placeIndex + dir + n) % n;
+  refreshWeather();
+});
 
 weatherWidget.addEventListener('click', () => {
   const place = weatherWidget.dataset.place;
@@ -1467,6 +1750,7 @@ function applyFont(font) {
 }
 
 function syncSettingsUI() {
+  renderPlaceSettings();
   const s = settings;
   set.name.value = s.userName;
   set.title.checked = s.showTitle;
@@ -1570,6 +1854,60 @@ const searchCities = debounce(async q => {
   }
 }, 350);
 set.city.addEventListener('input', () => searchCities(set.city.value.trim()));
+
+// ---- more clocks and weather places
+const CLOCK_PRESETS = DEFAULT_SETTINGS.clocks;
+function placeRow(label, note, { up, remove }) {
+  return h('li', {},
+    h('span', { class: 'place-name' }, label, note ? h('small', {}, note) : null),
+    up ? h('button', { type: 'button', class: 'place-btn', title: 'Move up', 'aria-label': `Move ${label} up`, onclick: up }, '↑') : null,
+    h('button', { type: 'button', class: 'place-btn', title: 'Remove', 'aria-label': `Remove ${label}`, onclick: remove }, '×'));
+}
+function moveUp(list, i) { if (i > 0) [list[i - 1], list[i]] = [list[i], list[i - 1]]; }
+function renderPlaceSettings() {
+  const clocks = settings.clocks;
+  $('#set-clock-list').replaceChildren(...clocks.map((c, i) => placeRow(c.name,
+    c.tz === LOCAL_TZ ? 'your time zone, so it’s skipped' : tzAbbr(c.tz) !== c.name ? tzAbbr(c.tz) : '', {
+      up: i ? () => updateSetting(s => moveUp(s.clocks, i)) : null,
+      remove: () => updateSetting(s => { s.clocks.splice(i, 1); }),
+    })));
+  const missing = CLOCK_PRESETS.filter(p => !clocks.some(c => c.tz === p.tz));
+  $('#set-clock-presets').replaceChildren(...(clocks.length < MAX_CLOCKS ? missing : []).map(p => h('button', {
+    type: 'button', class: 'chip', onclick: () => updateSetting(s => { s.clocks.push({ ...p }); }),
+  }, `+ ${p.name}`)));
+  $('#set-clock-city').hidden = clocks.length >= MAX_CLOCKS;
+  const places = settings.places;
+  $('#set-place-list').replaceChildren(...places.map((p, i) => placeRow(p.name, '', {
+    up: i ? () => updateSetting(s => moveUp(s.places, i)) : null,
+    remove: () => updateSetting(s => { s.places.splice(i, 1); }, { weather: true }),
+  })));
+  $('#set-place-city').hidden = places.length >= MAX_PLACES;
+}
+// City search for adding a clock (needs the city's time zone) or a weather place
+function citySearch(input, results, pick) {
+  const run = debounce(async q => {
+    if (q.length < 2) { results.replaceChildren(); return; }
+    try {
+      const found = await Weather.searchCity(q);
+      if (input.value.trim() !== q) return;
+      results.replaceChildren(...(found.length ? found.map(r => h('li', {}, h('button', {
+        type: 'button',
+        onclick: () => { input.value = ''; results.replaceChildren(); pick(r); },
+      }, r.name, h('small', {}, r.region)))) : [h('li', { class: 'muted' }, 'No cities found with that name.')]));
+    } catch {
+      results.replaceChildren(h('li', { class: 'muted' }, 'City search needs an internet connection.'));
+    }
+  }, 350);
+  input.addEventListener('input', () => run(input.value.trim()));
+}
+citySearch($('#set-clock-city'), $('#set-clock-results'), r => {
+  if (!validTz(r.tz)) { toast('Couldn’t find the time zone for that city.'); return; }
+  if (settings.clocks.some(c => c.tz === r.tz && c.name === r.name)) return;
+  updateSetting(s => { s.clocks.push({ tz: r.tz, name: r.name }); });
+});
+citySearch($('#set-place-city'), $('#set-place-results'), r => {
+  updateSetting(s => { s.places.push({ name: r.name, lat: r.lat, lon: r.lon }); }, { weather: true });
+});
 
 set.exportBtn.addEventListener('click', () => {
   const blob = new Blob([JSON.stringify({ app: 'metro-start', version: 1, tiles, settings, games: gameData }, null, 2)], { type: 'application/json' });
@@ -2040,6 +2378,119 @@ $('#wp-close').addEventListener('click', closeGallery);
 wp.more.addEventListener('click', () => showCategory(true));
 wp.overlay.addEventListener('click', e => { if (e.target === wp.overlay) closeGallery(); });
 
+// ---------------------------------------------------------------- news feed tiles
+const feedTiles = () => everyTile().map(x => x.tile).filter(t => t.type === 'feed');
+
+// Redraw just the feed tiles that show this feed (no full re-render, so nothing jumps or animates)
+function updateFeedTiles(url) {
+  for (const t of feedTiles().filter(x => x.url === url)) {
+    for (const el of document.querySelectorAll(`#grid .tile[data-id="${CSS.escape(t.id)}"], #folder-grid .tile[data-id="${CSS.escape(t.id)}"]`)) {
+      const fresh = feedTileEl(t);
+      const keep = ['dragging', 'enter', 'flipping', 'flip-out', 'flip-in', 'flipped'].filter(k => el.classList.contains(k));
+      el.className = fresh.className;
+      keep.forEach(k => el.classList.add(k));
+      if (fresh.getAttribute('href')) el.setAttribute('href', fresh.getAttribute('href'));
+      el.title = fresh.title;
+      el.replaceChildren(...fresh.childNodes);
+    }
+  }
+  if (headlines.id && (findTile(headlines.id) || {}).tile && findTile(headlines.id).tile.url === url) renderHeadlines();
+}
+
+let feedsBusy = false;
+async function refreshFeeds(force = false) {
+  if (feedsBusy) return;
+  feedsBusy = true;
+  try {
+    const urls = [...new Set(feedTiles().map(t => t.url))];
+    await Feeds.prune(urls);
+    for (const url of urls) {
+      if (!force && !Feeds.stale(url)) continue;
+      await Feeds.refresh(url);
+      updateFeedTiles(url);
+    }
+  } finally { feedsBusy = false; }
+}
+setInterval(() => { if (!document.hidden) refreshFeeds(); }, 5 * 60e3);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshFeeds(); });
+
+// Chrome only shows its permission prompt straight from a click
+function allowFeed(t) {
+  if (!hasChrome || !chrome.permissions) return;
+  chrome.permissions.request({ origins: Feeds.originsFor(t.url) }).then(async ok => {
+    if (!ok) { toast('Chrome needs your OK for this tile to read its news feed.'); return; }
+    await Feeds.refresh(t.url);
+    updateFeedTiles(t.url);
+  }, () => {});
+}
+
+// Add one of the ready-made feeds (from the + menu)
+function addPresetFeed(p, parentId) {
+  const ask = hasChrome && chrome.permissions ? chrome.permissions.request({ origins: Feeds.originsFor(p.feed) }).catch(() => false) : Promise.resolve(true);
+  ask.then(async ok => {
+    if (!ok) { toast('Chrome needs your OK for this tile to read its news feed.'); return; }
+    const t = { id: uid(), type: 'feed', title: p.name, url: p.feed, site: p.site, color: p.color, size: 'wide' };
+    const parent = findFolder(parentId);
+    (parent ? parent.children : tiles).push(t);
+    commit();
+    toast(`Added ${p.name}`);
+    await Feeds.refresh(p.feed);
+    updateFeedTiles(p.feed);
+  });
+}
+function feedMenuItems(parentId) {
+  return [
+    ...Feeds.PRESETS.map(p => ({ label: p.name, action: () => addPresetFeed(p, parentId) })),
+    '-',
+    { label: 'Another site…', action: () => openEditor({ type: 'feed', parentId }) },
+  ];
+}
+
+// ---- all headlines: a band listing the feed's latest stories
+const headlines = { overlay: $('#feed-overlay'), list: $('#feed-list'), title: $('#feed-title'), sub: $('#feed-sub'), id: null };
+function openHeadlines(id) {
+  const f = findTile(id);
+  if (!f) return;
+  headlines.id = id;
+  renderHeadlines();
+  openOverlay(headlines.overlay);
+  if (Feeds.stale(f.tile.url)) Feeds.refresh(f.tile.url).then(() => updateFeedTiles(f.tile.url));
+  Feeds.markSeen(f.tile.url).then(() => updateFeedTiles(f.tile.url));
+  setTimeout(() => (headlines.list.querySelector('a') || $('#feed-close')).focus({ preventScroll: true }), 50);
+}
+function renderHeadlines() {
+  const f = findTile(headlines.id);
+  if (!f) return;
+  const t = f.tile;
+  const c = Feeds.cached(t.url);
+  headlines.title.textContent = t.title;
+  headlines.sub.textContent = c && c.at && !c.needsAccess ? `Updated ${Feeds.ago(c.at) === 'now' ? 'just now' : Feeds.ago(c.at) + ' ago'}` : '';
+  const items = (c && c.items) || [];
+  if (!items.length) {
+    headlines.list.replaceChildren(h('li', { class: 'feed-empty' }, c && c.needsAccess ? 'Metro Start needs your OK to read this feed. ' : (c && c.error) || 'Loading stories…',
+      c && c.needsAccess ? h('button', { type: 'button', class: 'btn', onclick: () => allowFeed(t) }, 'Allow') : null));
+    return;
+  }
+  headlines.list.replaceChildren(...items.map(i => h('li', {},
+    h('a', { class: 'feed-item', href: i.link },
+      i.image ? h('img', { class: 'feed-thumb', src: i.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', onerror: e => e.target.remove() }) : null,
+      h('span', { class: 'feed-item-text' },
+        h('span', { class: 'feed-item-title' }, i.title),
+        h('span', { class: 'feed-item-meta' }, [i.source, Feeds.ago(i.date)].filter(Boolean).join(' · ')))))));
+}
+function closeHeadlines() { closeOverlay(headlines.overlay); headlines.id = null; }
+$('#feed-close').addEventListener('click', closeHeadlines);
+$('#feed-site').addEventListener('click', () => { const f = findTile(headlines.id); if (f) openUrl(feedHome(f.tile), false); });
+$('#feed-refresh').addEventListener('click', async () => {
+  const f = findTile(headlines.id);
+  if (!f) return;
+  headlines.sub.textContent = 'Updating…';
+  await Feeds.refresh(f.tile.url);
+  updateFeedTiles(f.tile.url);
+  renderHeadlines();
+});
+headlines.overlay.addEventListener('click', e => { if (e.target === headlines.overlay) closeHeadlines(); });
+
 // ---------------------------------------------------------------- news and markets widgets
 let widgetCache = { news: null, stocks: null }; // { key, at, data, error }
 const WIDGET_TTL = { news: 20 * 60e3, stocks: 5 * 60e3 };
@@ -2286,6 +2737,7 @@ document.addEventListener('keydown', e => {
     }
     if (!ctx.hidden) hideMenu();
     else if (!ed.overlay.hidden) closeEditor();
+    else if (!headlines.overlay.hidden) closeHeadlines();
     else if (!bm.overlay.hidden) closeBookmarkImport();
     else if (!wp.overlay.hidden) closeGallery();
     else if (openFolderId) folderBack();
@@ -2297,7 +2749,7 @@ document.addEventListener('keydown', e => {
   if (gameSession) return;
   if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
   if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
-  if (!ed.overlay.hidden || !bm.overlay.hidden || !wp.overlay.hidden || openFolderId || settingsPanel.classList.contains('open') || !ctx.hidden) return;
+  if (!ed.overlay.hidden || !headlines.overlay.hidden || !bm.overlay.hidden || !wp.overlay.hidden || openFolderId || settingsPanel.classList.contains('open') || !ctx.hidden) return;
   if (e.key === ' ') return;
   searchInput.focus();
 });
@@ -2386,6 +2838,7 @@ function toast(msg, action) {
 // ---------------------------------------------------------------- start
 (async function init() {
   await load();
+  await Feeds.loadCache();
   const storedGames = await Store.get('games', null);
   if (storedGames && typeof storedGames === 'object') gameData = { saves: storedGames.saves || {}, stats: storedGames.stats || {} };
   // 1.8.0 turned the flip on for everyone; from 1.8.1 it's off unless you switch it on (done once, so your choice sticks)
@@ -2425,6 +2878,7 @@ function toast(msg, action) {
   document.body.classList.add('ready');
   if (settings.animations) requestAnimationFrame(() => entrance(grid));
   refreshWeather();
+  refreshFeeds();
   widgetCache = (await Store.get('widgetCache', null)) || { news: null, stocks: null };
   refreshWidgets();
   setInterval(() => refreshWidgets(), 60e3); // only refetches what's stale
