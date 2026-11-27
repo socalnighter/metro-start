@@ -112,7 +112,12 @@ async def main():
         step=80
         tx = fg['x'] + 4 + 6*step + 10; ty = fg['y'] + 4 + 3*step + 10
         name='Third long bookmark name for a wide tile'
-        await pg.drag_and_drop(f"#folder-grid [title^='{name}']", "#folder-band", source_position={"x":10,"y":10}, target_position={"x": tx-band['x'], "y": ty-band['y']})
+        # drag with real mouse steps (Playwright's one-shot drag_and_drop sometimes loses the drop)
+        src=await pg.evaluate(f"(()=>{{const r=document.querySelector(\"#folder-grid [title^='{name}']\").getBoundingClientRect();return [r.left+10,r.top+10]}})()")
+        await pg.mouse.move(*src); await pg.mouse.down()
+        await pg.mouse.move(src[0]+12, src[1]+12, steps=3)
+        await pg.mouse.move(tx, ty, steps=10); await asyncio.sleep(0.15)
+        await pg.mouse.move(tx+1, ty); await pg.mouse.up()
         await asyncio.sleep(1.5); await pg.evaluate("Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>0)))")
         f1=await pg.evaluate(FP)
         check("folder: dropped tile stays where it was dropped", f1[name][:2]==[4+6*step, 4+3*step], f1[name])

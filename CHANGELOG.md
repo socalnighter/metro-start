@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.16.0
+- New: a Headlines style for news feed tiles, like the Windows 8.1 News tile. A large tile shows the three newest stories, each with a small picture; wide shows two; medium shows two titles. The site's icon sits in the corner, and each headline opens its own story (Ctrl+click or middle-click for a new tab). New feed tiles start in this style as large tiles; switch any tile between Headlines and Top story with right-click → Style, or in the tile editor. When a feed has no pictures, the headlines use the tile's full width.
+- Tests: the folder drag check now drags with real mouse steps, so it no longer fails now and then.
+
 ## 1.15.0
 - New: make a folder by dragging one tile onto another. Hold it over the middle of the other tile for half a second until the outline says "Make a folder", then let go. The folder is named after both tiles ("Gmail + Drive"), takes the other tile's spot, size and color, and nothing else moves. Undo splits them again. Works inside folders too (it makes a subfolder). A quick drop, or a drop near a tile's edge, still just moves the tile.
 

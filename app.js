@@ -253,7 +253,8 @@ function sanitizeTile(t, depth = 0) {
     const url = normalizeUrl(t.url);
     if (!hostOf(url)) return null;
     const site = hostOf(normalizeUrl(t.site)) ? normalizeUrl(t.site) : '';
-    return { ...base, type: 'feed', url, site, title: base.title || hostOf(site || url) };
+    // style: 'list' = a few headlines with small pictures (Windows 8.1 News), 'top' = the newest story's big photo
+    return { ...base, type: 'feed', url, site, style: t.style === 'list' ? 'list' : 'top', title: base.title || hostOf(site || url) };
   }
   const url = normalizeUrl(t.url);
   if (!url) return null;
@@ -530,6 +531,7 @@ function feedTileEl(t, { draggable = true, preview = false } = {}) {
     if (fresh) el.append(h('span', { class: 'feed-badge' }, fresh > 9 ? '9+' : String(fresh)));
     return el;
   }
+  if (t.style === 'list') return feedListFace(el, t, items, c, preview);
   if (photo) {
     el.append(h('div', { class: 'feed-photo' }, h('img', {
       src: photo, alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer', draggable: 'false',
@@ -542,6 +544,32 @@ function feedTileEl(t, { draggable = true, preview = false } = {}) {
       ? h('span', { class: 'feed-headline' }, top.title)
       : h('span', { class: 'feed-note' }, c && c.error ? c.error : c && c.needsAccess ? 'Select to let Metro Start read this feed' : 'Loading stories…'),
     h('span', { class: 'feed-meta' }, icon, h('span', { class: 'feed-meta-text' }, meta))));
+  return el;
+}
+
+// Headlines style: the newest few stories, each with a small picture, and the site's icon in the corner.
+// Each row opens its own story.
+const FEED_ROWS = { large: 3, wide: 2, medium: 2 };
+function feedListFace(el, t, items, c, preview) {
+  el.classList.add('feed-list-style');
+  el.classList.remove('has-photo');
+  const sample = { title: 'Headlines from this feed show here', image: '', link: '' };
+  const rows = (items.length ? items : preview ? [sample, sample, sample] : []).slice(0, FEED_ROWS[t.size] || 2);
+  const icon = () => tileIcon({ title: t.title, url: feedHome(t), icon: { mode: 'favicon' } });
+  // no picture boxes on medium tiles, or when none of the shown stories has a picture
+  const withThumbs = t.size !== 'medium' && (rows.some(i => i.image) || (preview && !items.length));
+  const list = h('div', { class: 'feed-rows' }, rows.map(i => h('div', {
+    class: 'feed-row', dataset: i.link ? { link: i.link } : {}, title: preview ? null : i.title,
+  },
+  withThumbs ? h('span', { class: 'feed-row-thumb' + (i.image ? '' : ' no-pic') },
+    i.image
+      ? h('img', { src: i.image, alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer', draggable: 'false',
+        onerror: e => { const box = e.target.parentNode; e.target.remove(); box.classList.add('no-pic'); box.append(icon()); } })
+      : icon()) : null,
+  h('span', { class: 'feed-row-title' }, i.title))));
+  if (!rows.length) list.append(h('span', { class: 'feed-note' }, c && c.error ? c.error : c && c.needsAccess ? 'Select to let Metro Start read this feed' : 'Loading stories…'));
+  el.append(list, h('span', { class: 'feed-corner', title: preview ? null : t.title }, icon()));
+  if (!preview) el.title = t.title;
   return el;
 }
 
@@ -789,6 +817,14 @@ function bindTileEvents(container, getFolderId) {
     if (t.type === 'feed') {
       const c = Feeds.cached(t.url);
       if (c && c.needsAccess) { e.preventDefault(); allowFeed(t); return; }
+      const row = t.style === 'list' && e.target.closest('.feed-row[data-link]');
+      if (row) {
+        e.preventDefault();
+        Feeds.markSeen(t.url);
+        if (e.ctrlKey || e.metaKey || e.shiftKey) openUrl(row.dataset.link, true);
+        else flipThen(el, t, () => openUrl(row.dataset.link, false));
+        return;
+      }
       const top = feedTop(t);
       if (t.size === 'small' || !top) { e.preventDefault(); openHeadlines(t.id); return; }
       if (e.ctrlKey || e.metaKey || e.shiftKey) return; // the browser opens the story in a new tab
@@ -810,6 +846,9 @@ function bindTileEvents(container, getFolderId) {
     const el = e.target.closest('.tile');
     const f = el && findTile(el.dataset.id);
     if (e.button === 1 && f && f.tile.type === 'link' && SPECIAL_SCHEME.test(f.tile.url)) { e.preventDefault(); openUrl(f.tile.url, true); }
+    // middle-click on a headline opens that story (not the tile's top story) in a new tab
+    const row = e.button === 1 && f && f.tile.type === 'feed' && e.target.closest('.feed-row[data-link]');
+    if (row) { e.preventDefault(); openUrl(row.dataset.link, true); }
   });
   container.addEventListener('keydown', e => {
     const el = e.target.closest('.tile[role="button"]');
@@ -1221,6 +1260,12 @@ function tileMenu(e, folderId) {
     const top = feedTop(t);
     if (top) items.push({ label: 'Open top story', action: () => { Feeds.markSeen(t.url); openUrl(top.link, false); } });
     items.push({ label: 'All headlines', action: () => openHeadlines(t.id) });
+    if (t.size !== 'small') {
+      items.push({ label: 'Style', sub: [
+        { label: (t.style === 'list' ? '✓ ' : '    ') + 'Headlines', action: () => { t.style = 'list'; commit(); } },
+        { label: (t.style !== 'list' ? '✓ ' : '    ') + 'Top story', action: () => { t.style = 'top'; commit(); } },
+      ] });
+    }
     items.push({ label: 'Open site', action: () => openUrl(feedHome(t), false) });
   }
   else items.push({ label: 'Open in new tab', action: () => openUrl(t.url, true) });
@@ -1313,7 +1358,7 @@ const ed = {
   iconField: $('#ed-icon-field'), iconMode: $('#ed-icon-mode'), imageRow: $('#ed-image-row'),
   imageUrl: $('#ed-image-url'), imageUpload: $('#ed-image-upload'), imageFile: $('#ed-image-file'),
   imageFill: $('#ed-image-fill'), preview: $('#ed-preview'), cancel: $('#ed-cancel'), colorCustom: null,
-  urlLabel: $('#ed-url-label'), feedPresets: $('#ed-feed-presets'), feedStatus: $('#ed-feed-status'), save: $('#ed-save'),
+  feedStyleField: $('#ed-feed-style-field'), feedStyle: $('#ed-feed-style'), urlLabel: $('#ed-url-label'), feedPresets: $('#ed-feed-presets'), feedStatus: $('#ed-feed-status'), save: $('#ed-save'),
 };
 let editing = null;
 
@@ -1348,7 +1393,7 @@ function openEditor({ tile = null, type = 'link', parentId = null } = {}) {
   const draft = tile ? structuredClone(tile) : {
     type, title: '', size: 'medium', color: PALETTE[Math.floor(Math.random() * (PALETTE.length - 1))],
     ...(type === 'folder' ? { children: [] } : { url: '', icon: { mode: 'favicon' } }),
-    ...(type === 'feed' ? { size: 'wide' } : {}),
+    ...(type === 'feed' ? { size: 'large', style: 'list' } : {}),
   };
   if (!draft.icon) draft.icon = { mode: 'favicon' };
   if (!draft.children) draft.children = [];
@@ -1391,11 +1436,14 @@ function syncEditor() {
   const d = editing.draft;
   setSeg(ed.type, d.type);
   setSeg(ed.size, d.size);
+  setSeg(ed.feedStyle, d.style || 'top');
   ed.urlField.hidden = d.type !== 'link' && d.type !== 'feed';
   ed.iconField.hidden = d.type !== 'link';
   ed.urlLabel.textContent = d.type === 'feed' ? 'Site or feed address' : 'Web address';
   ed.url.placeholder = d.type === 'feed' ? 'bbc.com, or a feed’s address' : 'youtube.com';
   ed.feedPresets.hidden = d.type !== 'feed' || !!editing.id;
+  ed.feedStyleField.hidden = d.type !== 'feed';
+  setSeg(ed.feedStyle, d.style || 'top');
   setSeg(ed.iconMode, d.icon.mode);
   ed.imageRow.hidden = d.icon.mode !== 'image';
   markSwatch(ed.colors, d.color);
@@ -1425,13 +1473,15 @@ ed.colorCustom = buildSwatches(ed.colors, PALETTE, c => { editing.draft.color = 
 onSeg(ed.type, v => {
   editing.draft.type = v;
   ed.heading.textContent = v === 'folder' ? 'New folder' : v === 'feed' ? 'Add a news feed' : 'Add a tile';
-  if (v === 'feed' && editing.draft.size === 'medium') editing.draft.size = 'wide';
+  if (v === 'feed' && editing.draft.size === 'medium') { editing.draft.size = 'large'; setSeg(ed.size, 'large'); }
+  if (v === 'feed' && !editing.draft.style) editing.draft.style = 'list';
   if (!editing.draft.icon) editing.draft.icon = { mode: 'favicon' };
   feedStatus('');
   syncEditor();
   (v === 'folder' ? ed.title : ed.url).focus();
 });
 onSeg(ed.size, v => { editing.draft.size = v; renderPreview(); });
+onSeg(ed.feedStyle, v => { editing.draft.style = v; renderPreview(); });
 onSeg(ed.iconMode, v => { editing.draft.icon.mode = v; syncEditor(); });
 ed.title.addEventListener('input', renderPreview);
 ed.url.addEventListener('input', () => { ed.url.classList.remove('invalid'); if (editing) delete editing.draft.site; feedStatus(''); renderPreviewSoon(); });
@@ -2429,7 +2479,7 @@ function addPresetFeed(p, parentId) {
   const ask = hasChrome && chrome.permissions ? chrome.permissions.request({ origins: Feeds.originsFor(p.feed) }).catch(() => false) : Promise.resolve(true);
   ask.then(async ok => {
     if (!ok) { toast('Chrome needs your OK for this tile to read its news feed.'); return; }
-    const t = { id: uid(), type: 'feed', title: p.name, url: p.feed, site: p.site, color: p.color, size: 'wide' };
+    const t = { id: uid(), type: 'feed', title: p.name, url: p.feed, site: p.site, color: p.color, size: 'large', style: 'list' };
     const parent = findFolder(parentId);
     (parent ? parent.children : tiles).push(t);
     commit();
